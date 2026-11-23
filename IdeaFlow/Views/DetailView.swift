@@ -5,6 +5,7 @@ import PhotosUI
 /// 详情页(DESIGN 9.2):状态胶囊流转、标题/正文编辑、附件区、标签、状态日志。
 struct DetailView: View {
     @EnvironmentObject private var env: AppEnvironment
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject var idea: Idea
     @StateObject private var audioPlayer = AudioPlayerService()
 
@@ -146,6 +147,11 @@ struct DetailView: View {
             .background(RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemGroupedBackground)))
             .onChange(of: contentText) { _, _ in scheduleSave() }
             .accessibilityIdentifier("detail_content")
+    }
+
+    private func remainingDays() -> Int {
+        let retention = UserDefaults.standard.integer(forKey: "recycleRetentionDays")
+        return retention > 0 ? retention : 30
     }
 
     private func scheduleSave() {
@@ -308,7 +314,13 @@ struct DetailView: View {
                     Label("分享(Markdown)", systemImage: "square.and.arrow.up")
                 }
                 Button(role: .destructive) {
+                    env.recycleToast = RecycleToast(
+                        message: "已移到回收站,\(remainingDays()) 天内可恢复",
+                        objectIDs: [idea.objectID]
+                    )
+                    Haptics.warning()
                     try? env.store.softDelete(idea)
+                    dismiss()   // 删除必须可见:立刻回到列表看到它消失
                 } label: {
                     Label("移到回收站", systemImage: "trash")
                 }

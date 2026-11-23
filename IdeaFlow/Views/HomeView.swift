@@ -133,8 +133,7 @@ struct HomeView: View {
                     .listRowSeparator(.hidden)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
-                            try? env.store.softDelete(idea)
-                            refresh()
+                            swipeDelete(idea)
                         } label: { Label("删除", systemImage: "trash") }
                         if idea.status == .draft {
                             Button {
@@ -161,8 +160,7 @@ struct HomeView: View {
                             Label("多选", systemImage: "checkmark.circle")
                         }
                         Button(role: .destructive) {
-                            try? env.store.softDelete(idea)
-                            refresh()
+                            swipeDelete(idea)
                         } label: {
                             Label("移到回收站", systemImage: "trash")
                         }
@@ -216,8 +214,23 @@ struct HomeView: View {
         for idea in targets {
             try? env.store.softDelete(idea)
         }
+        if !targets.isEmpty {
+            env.recycleToast = RecycleToast(
+                message: "已删除 \(targets.count) 条,可撤销",
+                objectIDs: targets.map(\.objectID)
+            )
+        }
         exitMultiSelect()
-        refresh()
+        withAnimation(.spring(response: 0.3)) { refresh() }
+    }
+
+    private func swipeDelete(_ idea: Idea) {
+        env.recycleToast = RecycleToast(
+            message: "已移到回收站,可撤销",
+            objectIDs: [idea.objectID]
+        )
+        try? env.store.softDelete(idea)
+        withAnimation(.spring(response: 0.3)) { refresh() }
     }
 
     @ViewBuilder
@@ -326,7 +339,9 @@ struct HomeView: View {
             queue: .main
         ) { _ in
             Task { @MainActor in
-                self.refresh()
+                withAnimation(.spring(response: 0.3)) {
+                    self.refresh()
+                }
             }
         }
     }

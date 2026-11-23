@@ -17,6 +17,8 @@ final class AppEnvironment: ObservableObject {
     @Published var pendingDraftText: String?
     /// 输入条当前文本(退后台时立即落草稿用)
     @Published var currentInputText: String = ""
+    /// 回收站删除反馈(撤销提示条)
+    @Published var recycleToast: RecycleToast?
 
     init(persistence: PersistenceController = PersistenceController.shared) {
         self.persistence = persistence

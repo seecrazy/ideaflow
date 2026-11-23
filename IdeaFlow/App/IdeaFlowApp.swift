@@ -10,9 +10,18 @@ struct IdeaFlowApp: App {
             RootTabView()
                 .environmentObject(env)
                 .tint(Color(env.appTint))
+                .overlay(alignment: .bottom) {
+                    // 回收站删除反馈:全局层,任何入口删除都可见(详情/首页/批量)
+                    if let toast = env.recycleToast {
+                        UndoToastView(env: env, toast: toast)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 84)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
                 .overlay {
                     if env.appLock.isLocked {
-                        LockScreenView()
+                        LockScreenView(env: env)
                     }
                 }
                 .onChange(of: scenePhase) { _, phase in
@@ -66,9 +75,9 @@ struct RootTabView: View {
         .environmentObject(AppEnvironment(persistence: .preview()))
 }
 
-/// Face ID 锁屏遮罩
+/// Face ID 锁屏遮罩(env 显式传入,根 overlay 无隐式注入)
 struct LockScreenView: View {
-    @EnvironmentObject private var env: AppEnvironment
+    let env: AppEnvironment
 
     var body: some View {
         VStack(spacing: 16) {

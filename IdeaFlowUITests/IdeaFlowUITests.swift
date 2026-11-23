@@ -135,4 +135,33 @@ final class IdeaFlowUITests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(cardTitled(app, "要删除的灵感").waitForExistence(timeout: 8), "恢复后卡片应回到首页")
     }
+    // 用例 4:详情页删除 → 返回列表 + 撤销提示 + 一键恢复(删除反馈优化)
+    func testDeleteFromDetailShowsToastAndUndo() {
+        let app = launch(reset: true)
+
+        typeIdea(app, "详情删除目标")
+        saveCurrent(app)
+        let card = cardTitled(app, "详情删除目标")
+        XCTAssertTrue(card.waitForExistence(timeout: 8))
+
+        card.tap()
+        let more = app.buttons["更多操作"].firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 5), "详情应有更多菜单")
+        more.tap()
+        let del = app.buttons["移到回收站"].firstMatch
+        XCTAssertTrue(del.waitForExistence(timeout: 3))
+        del.tap()
+
+        // 反馈一:提示条出现;反馈二:自动回到列表且卡片消失
+        XCTAssertTrue(app.descendants(matching: .any)["undo_toast"].firstMatch.waitForExistence(timeout: 4),
+                      "删除后应有撤销提示条")
+        // 提示条 4 秒自动消失:立即锁定撤销按钮,其余断言后置
+        let undo = app.descendants(matching: .any)["undo_button"].firstMatch
+        XCTAssertTrue(undo.waitForExistence(timeout: 3), "提示条应有撤销按钮")
+        XCTAssertTrue(app.descendants(matching: .any)["home_idea_list"].firstMatch.waitForExistence(timeout: 5),
+                      "删除后应自动返回列表")
+        XCTAssertFalse(cardTitled(app, "详情删除目标").exists, "列表中卡片应已消失")
+        undo.tap()
+        XCTAssertTrue(cardTitled(app, "详情删除目标").waitForExistence(timeout: 5), "撤销后卡片应恢复")
+    }
 }
