@@ -1,4 +1,5 @@
 import XCTest
+import AVFoundation
 import CoreData
 @testable import IdeaFlow
 
@@ -147,5 +148,79 @@ final class IdeaStoreTests: XCTestCase {
         let idea = try sut.fetch(status: nil, limit: 30)
         XCTAssertEqual(idea.count, 30, "fetchLimit 生效")
         XCTAssertEqual(try sut.fetch(status: .draft, limit: 30).count, 30)
+    }
+}
+
+// MARK: - 附件挂载(capture 管道收尾)
+
+@MainActor
+final class IdeaStoreAttachmentTests: XCTestCase {
+    var sut: IdeaStore!
+    var persistence: PersistenceController!
+    var tmpRoot: URL!
+    var media: MediaStore!
+
+    override func setUp() {
+        super.setUp()
+        persistence = PersistenceController(inMemory: true)
+        sut = IdeaStore(persistence: persistence)
+        tmpRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("attach-test-\(UUID().uuidString)", isDirectory: true)
+        media = MediaStore(files: AttachmentFiles(root: tmpRoot))
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: tmpRoot)
+        super.tearDown()
+    }
+
+    private func pngData() -> Data {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 80, height: 60))
+        return renderer.image { ctx in
+            UIColor.systemIndigo.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 80, height: 60))
+        }.jpegData(compressionQuality: 0.9)!
+    }
+
+    func testAddImageCreatesAttachmentWithFiles() throws {
+        let idea = sut.capture(text: "带图灵感")!
+        let att = try sut.addImage(pngData(), to: idea, media: media)
+        XCTAssertEqual(att.kind, .image)
+        XCTAssertNotNil(att.localPath)
+        let files = AttachmentFiles(root: tmpRoot)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: files.absoluteURL(for: att.localPath!).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: files.absoluteURL(for: att.thumbnailPath ?? "").path))
+        XCTAssertGreaterThan(att.fileSize, 0)
+        XCTAssertEqual(att.idea, idea)
+    }
+
+    func testAddAudioMovesFileAndStoresTranscription() throws {
+        let idea = sut.capture(text: "语音灵感")!
+        let tmpAudio = tmpRoot.appendingPathComponent("tmp-rec.m4a")
+        try FileManager.default.createDirectory(at: tmpRoot, withIntermediateDirectories: true)
+        // 生成真实 AAC 文件:AVAsset 读假字节会抛 ObjC 异常
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1)!
+        let file = try AVAudioFile(forWriting: tmpAudio, settings: MediaStore.audioSettings,
+                                   commonFormat: .pcmFormatFloat32, interleaved: false)
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4410)!
+        buffer.frameLength = 4410
+        try file.write(from: buffer)
+        let att = try sut.addAudio(at: tmpAudio, to: idea, duration: 0.1,
+                                   transcription: "转写文本", media: media)
+        XCTAssertEqual(att.kind, .audio)
+        XCTAssertEqual(att.transcription, "转写文本")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tmpAudio.path), "临时文件应被移走")
+        let files = AttachmentFiles(root: tmpRoot)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: files.absoluteURL(for: att.localPath!).path))
+    }
+
+    func testAddLinkStoresMeta() throws {
+        let idea = sut.capture(text: "链接灵感")!
+        let att = sut.addLink(LinkMeta(url: URL(string: "https://example.com/a")!,
+                                       title: "示例", summary: "摘要"), to: idea)
+        XCTAssertEqual(att.kind, .link)
+        XCTAssertEqual(att.linkURL, "https://example.com/a")
+        XCTAssertEqual(att.linkTitle, "示例")
+        XCTAssertEqual(att.linkSummary, "摘要")
     }
 }

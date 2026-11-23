@@ -135,6 +135,49 @@ final class IdeaStore: ObservableObject {
         onIdeaRemoved?(id)
     }
 
+    // MARK: - 附件挂载(capture 管道收尾:先 capture 得 Idea,再把各形态附件落盘+建实体)
+
+    @discardableResult
+    func addImage(_ data: Data, to idea: Idea, media: MediaStore = MediaStore()) throws -> Attachment {
+        let saved = try media.saveImage(data, ideaID: idea.id)
+        let att = Attachment.create(in: ctx, idea: idea, kind: .image)
+        att.localPath = saved.relativePath
+        att.thumbnailPath = saved.thumbRelativePath
+        att.fileSize = saved.fileSize
+        att.mimeType = "image/jpeg"
+        att.fileName = (saved.relativePath as NSString).lastPathComponent
+        saveOrRollback()
+        onIdeaChanged?(idea, .updated)
+        return att
+    }
+
+    @discardableResult
+    func addAudio(at tempURL: URL, to idea: Idea, duration: Double?,
+                  transcription: String? = nil, media: MediaStore = MediaStore()) throws -> Attachment {
+        let saved = try media.saveAudio(at: tempURL, ideaID: idea.id)
+        let att = Attachment.create(in: ctx, idea: idea, kind: .audio)
+        att.localPath = saved.relativePath
+        att.fileSize = saved.fileSize
+        att.duration = saved.duration ?? duration ?? 0
+        att.transcription = transcription
+        att.mimeType = "audio/mp4"
+        att.fileName = (saved.relativePath as NSString).lastPathComponent
+        saveOrRollback()
+        onIdeaChanged?(idea, .updated)
+        return att
+    }
+
+    @discardableResult
+    func addLink(_ meta: LinkMeta, to idea: Idea) -> Attachment {
+        let att = Attachment.create(in: ctx, idea: idea, kind: .link)
+        att.linkURL = meta.url.absoluteString
+        att.linkTitle = meta.title
+        att.linkSummary = meta.summary
+        saveOrRollback()
+        onIdeaChanged?(idea, .updated)
+        return att
+    }
+
     // MARK: - 置顶与查询
 
     func togglePin(_ idea: Idea) {
