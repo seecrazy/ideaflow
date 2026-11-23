@@ -59,9 +59,9 @@ final class SearchService: ObservableObject {
     }
 
     let index: SearchIndexDatabase
+    let queue = DispatchQueue(label: "ideaflow.search.index")
+    weak var store: IdeaStore?
     private let defaults: UserDefaults
-    private let queue = DispatchQueue(label: "ideaflow.search.index")
-    private weak var store: IdeaStore?
 
     private static let historyKey = "ideaflow.search.history"
 
