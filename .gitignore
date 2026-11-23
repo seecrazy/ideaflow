@@ -1,0 +1,14 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcdebugger/
+*.breakpoint-v2/
+
+# SwiftPM
+.build/
+
+# workspace
+.superpowers/
+.DS_Store
