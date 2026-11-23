@@ -11,6 +11,8 @@ struct HomeView: View {
     @State private var multiSelectActive = false
     @State private var selectedIDs: Set<NSManagedObjectID> = []
     @State private var observer: NSObjectProtocol?
+    @State private var autoPushDetail = ProcessInfo.processInfo.arguments.contains("-openDetail")
+    @State private var autoPushRecycle = ProcessInfo.processInfo.arguments.contains("-openRecycle")
 
     private let pageSize = 30
 
@@ -59,6 +61,17 @@ struct HomeView: View {
         .onAppear {
             refresh()
             installSaveObserver()
+        }
+        .navigationDestination(isPresented: $autoPushDetail) {
+            // 截图/演示:优先推附件最丰富的条目,展示附件区与日志
+            if let richest = ideas.first(where: { !$0.attachments.isEmpty }) ?? ideas.first {
+                DetailView(idea: richest)
+            } else {
+                Text("暂无数据")
+            }
+        }
+        .navigationDestination(isPresented: $autoPushRecycle) {
+            RecycleBinView()
         }
         .onDisappear {
             if let observer { NotificationCenter.default.removeObserver(observer) }

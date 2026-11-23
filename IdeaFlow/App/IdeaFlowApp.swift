@@ -35,17 +35,30 @@ extension AppEnvironment {
 
 struct RootTabView: View {
     @EnvironmentObject private var env: AppEnvironment
+    @State private var selection = RootTabView.initialTab()
+
+    static func initialTab() -> Int {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-openPageSearch") { return 1 }
+        if args.contains("-openPageTags") { return 2 }
+        if args.contains("-openPageSettings") { return 3 }
+        return 0
+    }
 
     var body: some View {
-        TabView {
+        TabView(selection: $selection) {
             NavigationStack { HomeView() }
                 .tabItem { Label("首页", systemImage: "house.fill") }
+                .tag(0)
             NavigationStack { SearchView() }
                 .tabItem { Label("搜索", systemImage: "magnifyingglass") }
+                .tag(1)
             NavigationStack { TagsView() }
                 .tabItem { Label("标签", systemImage: "tag") }
+                .tag(2)
             NavigationStack { SettingsView() }
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }
+                .tag(3)
         }
     }
 }

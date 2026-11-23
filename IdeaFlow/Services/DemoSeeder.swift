@@ -1,5 +1,6 @@
 import Foundation
 import CoreData
+import UIKit
 
 /// 演示种子(Task 12 完整化):多状态/多形态/相对时间分布
 @MainActor
@@ -43,8 +44,14 @@ enum DemoSeeder {
             Row(text: "整理 2026 想去的五个城市\n京都、里斯本、清迈、大理、札幌", tags: ["旅行"], status: .pending, created: back(21, 8)),
         ]
 
+        var firstWithLink: Idea?
+        var firstWithImage: Idea?
+        var firstWithAudio: Idea?
         for row in rows {
             if let idea = store.capture(text: row.text, tagNames: row.tags) {
+                if firstWithLink == nil, row.tags.contains("支付") { firstWithLink = idea }
+                if firstWithImage == nil, row.tags.contains("读书") { firstWithImage = idea }
+                if firstWithAudio == nil, row.tags.contains("工作") { firstWithAudio = idea }
                 idea.createdAt = row.created
                 idea.updatedAt = row.created
                 idea.statusChangedAt = row.created
@@ -68,6 +75,38 @@ enum DemoSeeder {
                 }
                 try? store.persistence.saveIfNeeded(store.ctx)
             }
+        }
+
+        // 附件演示:链接卡片 / 图片缩略图 / 语音转写条
+        if let idea = firstWithLink {
+            store.addLink(LinkMeta(url: URL(string: "https://mp.weixin.qq.com/s/payment-flow")!,
+                                   title: "移动支付转化率白皮书",
+                                   summary: "结算每减少一步,转化率提升约 7%"), to: idea)
+        }
+        if let idea = firstWithImage {
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 1600, height: 1200))
+            let data = renderer.image { ctx in
+                UIColor(red: 0.93, green: 0.52, blue: 0.18, alpha: 1).setFill()
+                ctx.fill(CGRect(x: 0, y: 0, width: 800, height: 1200))
+                UIColor(red: 0.16, green: 0.48, blue: 0.65, alpha: 1).setFill()
+                ctx.fill(CGRect(x: 800, y: 0, width: 800, height: 1200))
+                UIColor.white.setFill()
+                ctx.fill(CGRect(x: 300, y: 500, width: 1000, height: 200))
+            }.jpegData(compressionQuality: 0.9)!
+            _ = try? store.addImage(data, to: idea, media: MediaStore())
+        }
+        // 回收站演示数据
+        if let recycled = store.capture(text: "旧想法:做一个 RSS 聚合器\n后来觉得信息流已经够多了", tagNames: ["技术"]) {
+            try? store.softDelete(recycled)
+            recycled.deletedAt = Date().addingTimeInterval(-3 * 86400)
+            try? store.persistence.saveIfNeeded(store.ctx)
+        }
+
+        if let idea = firstWithAudio {
+            let att = Attachment.create(in: store.ctx, idea: idea, kind: .audio)
+            att.duration = 47
+            att.transcription = "开会时老板提的三个指标:留存、时长、分享率。下季度 OKR 就围绕这三个来拆。"
+            try? store.persistence.saveIfNeeded(store.ctx)
         }
     }
 }
