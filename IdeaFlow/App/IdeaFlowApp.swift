@@ -10,7 +10,15 @@ struct IdeaFlowApp: App {
             RootTabView()
                 .environmentObject(env)
                 .tint(Color(env.appTint))
+                .overlay {
+                    if env.appLock.isLocked {
+                        LockScreenView()
+                    }
+                }
                 .onChange(of: scenePhase) { _, phase in
+                    if phase == .active {
+                        env.appLock.handleBecomeActive()
+                    }
                     // DESIGN §4.3:失焦/退后台立即落草稿,不等 500ms 节流
                     if phase != .active, !env.currentInputText.isEmpty {
                         env.draftService.save(text: env.currentInputText)
@@ -45,4 +53,24 @@ struct RootTabView: View {
 #Preview {
     RootTabView()
         .environmentObject(AppEnvironment(persistence: .preview()))
+}
+
+/// Face ID 锁屏遮罩
+struct LockScreenView: View {
+    @EnvironmentObject private var env: AppEnvironment
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "lock.shield")
+                .font(.system(size: 46))
+                .foregroundStyle(.tertiary)
+            Text("灵感集已锁定").font(.headline)
+            Button("解锁") {
+                Task { await env.appLock.authenticate() }
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial)
+    }
 }

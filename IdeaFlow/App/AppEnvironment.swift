@@ -11,6 +11,7 @@ final class AppEnvironment: ObservableObject {
     let draftService: DraftService
     let mediaStore: MediaStore
     let linkService: LinkMetadataService
+    let appLock = AppLockService()
 
     /// 首页草稿恢复提示
     @Published var pendingDraftText: String?
