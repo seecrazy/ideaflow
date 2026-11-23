@@ -116,10 +116,26 @@ struct HomeView: View {
                         } label: { Label("删除", systemImage: "trash") }
                         quickAction(for: idea)
                     }
-                    .onLongPressGesture {
-                        Haptics.tap()
-                        multiSelectActive = true
-                        selectedIDs = [idea.objectID]
+                    .contextMenu {
+                        Button {
+                            env.store.togglePin(idea)
+                            refresh()
+                        } label: {
+                            Label(idea.isPinned ? "取消置顶" : "置顶", systemImage: "pin")
+                        }
+                        Button {
+                            Haptics.tap()
+                            multiSelectActive = true
+                            selectedIDs = [idea.objectID]
+                        } label: {
+                            Label("多选", systemImage: "checkmark.circle")
+                        }
+                        Button(role: .destructive) {
+                            try? env.store.softDelete(idea)
+                            refresh()
+                        } label: {
+                            Label("移到回收站", systemImage: "trash")
+                        }
                     }
                     .accessibilityIdentifier("idea_card_\(idea.id.uuidString)")
                     .onAppear {

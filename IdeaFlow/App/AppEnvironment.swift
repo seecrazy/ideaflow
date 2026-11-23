@@ -31,6 +31,10 @@ final class AppEnvironment: ObservableObject {
         self.mediaStore = MediaStore()
         self.linkService = LinkMetadataService()
 
+        if ProcessInfo.processInfo.arguments.contains("-uiTestReset") {
+            self.resetForUITests()
+        }
+
         pendingDraftText = draftService.draft?.text
 
         // 回收站保留期清理(DESIGN §13:启动时清理)
@@ -41,6 +45,18 @@ final class AppEnvironment: ObservableObject {
             DemoSeeder.seedIfNeeded(store: store)
             search.flushIndex()
         }
+    }
+    /// UI 测试隔离:清空全部数据与草稿
+    private func resetForUITests() {
+        draftService.clear()
+        UserDefaults.standard.removeObject(forKey: "ideaflow.search.history")
+        let coordinator = persistence.container.persistentStoreCoordinator
+        for entity in ["StatusLog", "Attachment", "Idea", "Tag", "SavedFilter"] {
+            let fetch = NSFetchRequest<NSFetchRequestResult>(entityName: entity)
+            let delete = NSBatchDeleteRequest(fetchRequest: fetch)
+            _ = try? coordinator.execute(delete, with: persistence.viewContext)
+        }
+        persistence.viewContext.reset()
     }
 }
 
