@@ -17,12 +17,15 @@ final class IdeaFlowUITests: XCTestCase {
         return app
     }
 
-    /// 确定性输入:聚焦 → 输入 → 校验绑定生效
+    /// 确定性输入:入口条 → 速记面板 → 输入 → 校验绑定生效
     private func typeIdea(_ app: XCUIApplication, _ text: String) {
-        let field = app.textFields["quick_input_field"]
-        XCTAssertTrue(field.waitForExistence(timeout: 10), "输入条应常驻首页")
+        let entry = app.descendants(matching: .any)["quick_entry_bar"].firstMatch
+        XCTAssertTrue(entry.waitForExistence(timeout: 10), "入口条应常驻首页")
+        entry.tap()
+        let field = app.descendants(matching: .any)["capture_content"].firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 6), "速记面板应弹出")
+        usleep(600_000)
         field.tap()
-        usleep(400_000)
         field.typeText(text)
         usleep(400_000)
         if !(field.value as? String ?? "").contains(text) {
@@ -31,6 +34,12 @@ final class IdeaFlowUITests: XCTestCase {
             field.typeText(text)
             usleep(600_000)
         }
+    }
+
+    private func saveCurrent(_ app: XCUIApplication) {
+        let save = app.buttons["capture_save"].firstMatch
+        XCTAssertTrue(save.waitForExistence(timeout: 4))
+        save.tap()
     }
 
     private func dismissKeyboard(_ app: XCUIApplication) {
@@ -50,7 +59,7 @@ final class IdeaFlowUITests: XCTestCase {
 
         typeIdea(app, "端到端测试灵感")
         dismissKeyboard(app)
-        app.buttons["quick_save"].tap()
+        saveCurrent(app)
         let card = cardTitled(app, "端到端测试灵感")
         XCTAssertTrue(card.waitForExistence(timeout: 8), "保存后卡片应出现在首页")
 
@@ -80,7 +89,7 @@ final class IdeaFlowUITests: XCTestCase {
         let app = launch(reset: true)
 
         typeIdea(app, "没写完的想法")
-        sleep(2)   // 等 500ms 节流落草稿
+        sleep(2)   // 等 500ms 节流落草稿(面板保持打开,模拟被打断)
 
         app.terminate()
         let relaunched = launch(reset: false)
@@ -91,7 +100,7 @@ final class IdeaFlowUITests: XCTestCase {
         recovered.tap()
         usleep(800_000)   // 等状态提交渲染
 
-        relaunched.buttons["quick_save"].tap()
+        saveCurrent(relaunched)
         XCTAssertTrue(cardTitled(relaunched, "没写完的想法").waitForExistence(timeout: 8), "草稿应可一键转正式")
     }
 
@@ -101,7 +110,7 @@ final class IdeaFlowUITests: XCTestCase {
 
         typeIdea(app, "要删除的灵感")
         dismissKeyboard(app)
-        app.buttons["quick_save"].tap()
+        saveCurrent(app)
         let card = cardTitled(app, "要删除的灵感")
         XCTAssertTrue(card.waitForExistence(timeout: 8))
 

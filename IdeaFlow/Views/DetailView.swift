@@ -1,5 +1,6 @@
 import SwiftUI
 import CoreData
+import PhotosUI
 
 /// 详情页(DESIGN 9.2):状态胶囊流转、标题/正文编辑、附件区、标签、状态日志。
 struct DetailView: View {
@@ -14,6 +15,10 @@ struct DetailView: View {
     @State private var newTagName = ""
     @State private var transitionNoteTarget: IdeaStatus?
     @State private var noteText = ""
+    @State private var showDetailVoice = false
+    @State private var showDetailLink = false
+    @State private var showDocPicker = false
+    @State private var photoItems: [PhotosPickerItem] = []
 
     var body: some View {
         ScrollView {
@@ -50,6 +55,42 @@ struct DetailView: View {
         .onAppear {
             titleText = idea.title ?? ""
             contentText = idea.content ?? ""
+        }
+        .sheet(isPresented: $showDetailVoice) {
+            VoiceCaptureSheet { pending in
+                guard let pending else { return }
+                if case .audio(let url, let duration, let transcription) = pending.kind {
+                    _ = try? env.store.addAudio(at: url, to: idea, duration: duration,
+                                                 transcription: transcription, media: env.mediaStore)
+                }
+            }
+            .presentationDetents([.medium])
+            .environmentObject(env)
+        }
+        .sheet(isPresented: $showDetailLink) {
+            LinkCaptureSheet(linkService: env.linkService) { meta in
+                env.store.addLink(meta, to: idea)
+            }
+            .presentationDetents([.height(240)])
+        }
+        .sheet(isPresented: $showDocPicker) {
+            DocumentPickerSheet { urls in
+                for url in urls {
+                    _ = try? env.store.addFile(at: url, to: idea, media: env.mediaStore)
+                }
+            }
+        }
+        .onChange(of: photoItems) { _, items in
+            guard !items.isEmpty else { return }
+            let current = items
+            photoItems = []
+            Task {
+                for item in current {
+                    if let data = try? await item.loadTransferable(type: Data.self), !data.isEmpty {
+                        _ = try? env.store.addImage(data, to: idea, media: env.mediaStore)
+                    }
+                }
+            }
         }
     }
 
@@ -125,16 +166,22 @@ struct DetailView: View {
         let images = idea.attachments.filter { $0.kind == .image }.sorted { $0.createdAt < $1.createdAt }
         let audios = idea.attachments.filter { $0.kind == .audio }.sorted { $0.createdAt < $1.createdAt }
         let links = idea.attachments.filter { $0.kind == .link }.sorted { $0.createdAt < $1.createdAt }
-        if !images.isEmpty || !audios.isEmpty || !links.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                SectionHeader(icon: "paperclip", title: "附件")
+        let files = idea.attachments.filter { $0.kind == .file || $0.kind == .video }.sorted { $0.createdAt < $1.createdAt }
+        VStack(alignment: .leading, spacing: 12) {
+            SectionHeader(icon: "paperclip", title: "附件 (\(idea.attachments.count))", trailing: {
+                addAttachmentMenu
+            })
                 if !images.isEmpty { imageGrid(images) }
                 ForEach(audios, id: \.objectID) { audio in
                     AudioRow(att: audio, player: audioPlayer)
                 }
                 ForEach(links, id: \.objectID) { link in
                     LinkCard(att: link)
+                        .attachmentRemoval(link, env: env)
                 }
+            ForEach(files, id: \.objectID) { file in
+                FileRow(att: file)
+                    .attachmentRemoval(file, env: env)
             }
         }
     }
@@ -145,7 +192,36 @@ struct DetailView: View {
                 ThumbnailView(att: att)
                     .frame(height: 96)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .attachmentRemoval(att, env: env)
             }
+        }
+    }
+
+    /// 附件追加菜单:语音 / 图片 / 链接 / 文件(DESIGN §8 附件管理)
+    private var addAttachmentMenu: some View {
+        Menu {
+            Button {
+                showDetailVoice = true
+            } label: {
+                Label("录语音", systemImage: "mic.fill")
+            }
+            PhotosPicker(selection: $photoItems, maxSelectionCount: 9, matching: .images) {
+                Label("拍照或相册", systemImage: "camera.fill")
+            }
+            Button {
+                showDetailLink = true
+            } label: {
+                Label("链接", systemImage: "link")
+            }
+            Button {
+                showDocPicker = true
+            } label: {
+                Label("文件 / PDF", systemImage: "doc.fill")
+            }
+        } label: {
+            Label("添加", systemImage: "plus.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color(env.appTint))
         }
     }
 
@@ -410,6 +486,77 @@ struct FlowTags: View {
                     .background(Capsule().fill(Color(.tertiarySystemFill)))
                 }
             }
+        }
+    }
+}
+
+/// 文件附件行
+struct FileRow: View {
+    @ObservedObject var att: Attachment
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.fill")
+                .font(.system(size: 22))
+                .foregroundStyle(.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(att.fileName ?? "文件")
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+                Text(ByteCountFormatter.string(fromByteCount: att.fileSize, countStyle: .file))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemGroupedBackground)))
+    }
+}
+
+/// 附件移除:长按菜单(网格/卡片内 swipe 不可用)
+struct AttachmentRemovalModifier: ViewModifier {
+    @ObservedObject var att: Attachment
+    let env: AppEnvironment
+
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            Button(role: .destructive) {
+                env.store.removeAttachment(att)
+            } label: {
+                Label("移除附件", systemImage: "trash")
+            }
+        }
+    }
+}
+
+extension View {
+    func attachmentRemoval(_ att: Attachment, env: AppEnvironment) -> some View {
+        modifier(AttachmentRemovalModifier(att: att, env: env))
+    }
+}
+
+/// UIDocumentPickerViewController 桥:选文件以副本导入
+struct DocumentPickerSheet: UIViewControllerRepresentable {
+    var onPick: ([URL]) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+        picker.allowsMultipleSelection = true
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: ([URL]) -> Void
+        init(onPick: @escaping ([URL]) -> Void) { self.onPick = onPick }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onPick(urls)
         }
     }
 }

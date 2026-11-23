@@ -178,6 +178,40 @@ final class IdeaStore: ObservableObject {
         return att
     }
 
+    /// 文件/PDF 导入:复制进附件目录(DESIGN §4.4 文件附件)
+    @discardableResult
+    func addFile(at srcURL: URL, to idea: Idea, media: MediaStore = MediaStore()) throws -> Attachment {
+        let secured = srcURL.startAccessingSecurityScopedResource()
+        defer { if secured { srcURL.stopAccessingSecurityScopedResource() } }
+
+        let dir = try media.files.ensureDirectory(for: idea.id)
+        let dest = dir.appendingPathComponent(srcURL.lastPathComponent)
+        try? FileManager.default.removeItem(at: dest)
+        try FileManager.default.copyItem(at: srcURL, to: dest)
+        let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int64) ?? 0
+
+        let att = Attachment.create(in: ctx, idea: idea, kind: .file)
+        att.localPath = "\(idea.id.uuidString)/\(dest.lastPathComponent)"
+        att.fileName = dest.lastPathComponent
+        att.fileSize = size ?? 0
+        saveOrRollback()
+        onIdeaChanged?(idea, .updated)
+        return att
+    }
+
+    /// 移除附件:实体+物理文件一起删
+    func removeAttachment(_ att: Attachment, files: AttachmentFiles = AttachmentFiles()) {
+        let idea = att.idea
+        if let relative = att.localPath {
+            try? FileManager.default.removeItem(at: files.absoluteURL(for: relative))
+        }
+        ctx.delete(att)
+        saveOrRollback()
+        if let idea {
+            onIdeaChanged?(idea, .updated)
+        }
+    }
+
     // MARK: - 置顶与查询
 
     func togglePin(_ idea: Idea) {

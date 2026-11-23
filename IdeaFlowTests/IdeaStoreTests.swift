@@ -224,3 +224,61 @@ final class IdeaStoreAttachmentTests: XCTestCase {
         XCTAssertEqual(att.linkSummary, "摘要")
     }
 }
+
+// MARK: - 附件追加/移除(详情页补料)
+
+@MainActor
+final class IdeaStoreAttachmentEditTests: XCTestCase {
+    var sut: IdeaStore!
+    var persistence: PersistenceController!
+    var tmpRoot: URL!
+    var media: MediaStore!
+
+    override func setUp() {
+        super.setUp()
+        persistence = PersistenceController(inMemory: true)
+        sut = IdeaStore(persistence: persistence)
+        tmpRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("attedit-\(UUID().uuidString)", isDirectory: true)
+        media = MediaStore(files: AttachmentFiles(root: tmpRoot))
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: tmpRoot)
+        super.tearDown()
+    }
+
+    private func pngData() -> Data {
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 60, height: 60))
+        return renderer.image { ctx in
+            UIColor.systemTeal.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 60, height: 60))
+        }.jpegData(compressionQuality: 0.9)!
+    }
+
+    func testRemoveAttachmentDeletesEntityAndFile() throws {
+        let idea = sut.capture(text: "要移除附件的灵感")!
+        let att = try sut.addImage(pngData(), to: idea, media: media)
+        let path = AttachmentFiles(root: tmpRoot).absoluteURL(for: att.localPath!)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path.path))
+
+        sut.removeAttachment(att, files: AttachmentFiles(root: tmpRoot))
+        XCTAssertEqual(idea.attachments.count, 0, "实体应移除")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path.path), "文件应删除")
+    }
+
+    func testAddFileCopiesIntoAttachmentDirectory() throws {
+        let idea = sut.capture(text: "带文件的灵感")!
+        try FileManager.default.createDirectory(at: tmpRoot, withIntermediateDirectories: true)
+        let src = tmpRoot.appendingPathComponent("source-doc.pdf")
+        try Data([0x25, 0x50, 0x44, 0x46]).write(to: src)
+
+        let att = try sut.addFile(at: src, to: idea, media: media)
+        XCTAssertEqual(att.kind, .file)
+        XCTAssertEqual(att.fileName, "source-doc.pdf")
+        XCTAssertGreaterThan(att.fileSize, 0)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: src.path), "导入是复制:源文件保留(文档选择器语义)")
+        let dest = AttachmentFiles(root: tmpRoot).absoluteURL(for: att.localPath!)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dest.path), "文件应进入附件目录")
+    }
+}

@@ -22,7 +22,7 @@ struct PendingAttachment: Identifiable {
     }
 }
 
-/// 纯附件保存的零必填占位(终审 #1):语音/图片用速记名,链接用其标题
+/// 纯附件保存的零必填占位:语音/图片用速记名,链接用其标题
 enum QuickCapture {
     static func placeholderText(for pendings: [PendingAttachment]) -> String {
         for pending in pendings {
@@ -40,221 +40,107 @@ enum QuickCapture {
     }
 }
 
-/// 底部常驻输入条(DESIGN §4.3):idle → focused → typing → saving → idle;
-/// 500ms 节流草稿;工具条 🎤 📷 🔗;零必填,任何内容可直接保存。
-struct QuickInputBar: View {
+/// 首页常驻入口条(捕捉隐喻,非聊天框):点文本区开速记面板;
+/// 🎤 直达录音、录完进面板预挂;📷 相册选完进面板预挂;🔗 进面板直弹链接输入。
+struct QuickEntryBar: View {
     @EnvironmentObject private var env: AppEnvironment
-    @FocusState private var focused: Bool
 
-    @State private var pendings: [PendingAttachment] = []
-    @State private var draftSaveTask: Task<Void, Never>?
-    @State private var saving = false
-    @State private var saveError: String?
-
-    @State private var showVoiceSheet = false
-    @State private var showLinkSheet = false
+    @State private var showCapture = false
+    @State private var entryAttachments: [PendingAttachment] = []
+    @State private var entryAction: QuickCaptureSheet.EntryAction = .none
+    @State private var showVoice = false
     @State private var photoItems: [PhotosPickerItem] = []
 
     var body: some View {
         VStack(spacing: 0) {
             Divider()
-            VStack(spacing: 8) {
-                if !pendings.isEmpty { pendingRow }
-                HStack(alignment: .bottom, spacing: 10) {
-                    TextField("记点什么…", text: $env.currentInputText, axis: .vertical)
-                        .focused($focused)
-                        .lineLimit(1...4)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 16))
-                        .padding(.vertical, 8)
-                        .accessibilityIdentifier("quick_input_field")
-                        .onSubmit(save)
-
-                    if focused {
-                        toolIcons
+            HStack(spacing: 14) {
+                Button {
+                    openCapture([], action: .none)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 16))
+                        Text("记点什么…")
+                            .font(.system(size: 16))
+                        Spacer(minLength: 0)
                     }
-                    saveButton
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(Color(.tertiarySystemFill)))
                 }
+                .accessibilityIdentifier("quick_entry_bar")
+                .buttonStyle(.plain)
+
+                Button {
+                    showVoice = true
+                } label: {
+                    Image(systemName: "mic.circle.fill")
+                        .font(.system(size: 28))
+                }
+                .foregroundStyle(Color(env.appTint))
+                .accessibilityLabel("语音速记")
+
+                PhotosPicker(selection: $photoItems, maxSelectionCount: 9, matching: .images) {
+                    Image(systemName: "camera.circle.fill")
+                        .font(.system(size: 28))
+                }
+                .foregroundStyle(Color(env.appTint))
+                .accessibilityLabel("拍照速记")
+
+                Button {
+                    openCapture([], action: .link)
+                } label: {
+                    Image(systemName: "link.circle.fill")
+                        .font(.system(size: 28))
+                }
+                .foregroundStyle(Color(env.appTint))
+                .accessibilityLabel("收藏链接")
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
             .background(.bar)
         }
-        .onChange(of: env.currentInputText) { _, text in
-            scheduleDraftSave(text)
-        }
-        .onChange(of: focused) { _, isFocused in
-            if !isFocused { flushDraft() }
-        }
-        .sheet(isPresented: $showVoiceSheet) {
+        .sheet(isPresented: $showVoice) {
             VoiceCaptureSheet { pending in
-                if let pending { pendings.append(pending) }
-                focused = true
+                guard let pending else { return }
+                openCapture([pending], action: .none)
             }
             .presentationDetents([.medium])
+            .environmentObject(env)
         }
-        .sheet(isPresented: $showLinkSheet) {
-            LinkCaptureSheet(linkService: env.linkService) { meta in
-                pendings.append(PendingAttachment(kind: .link(meta)))
-                focused = true
-            }
-            .presentationDetents([.height(220)])
-        }
-        .alert("保存提示", isPresented: Binding(
-            get: { saveError != nil },
-            set: { if !$0 { saveError = nil } }
-        )) {
-            Button("好", role: .cancel) { saveError = nil }
-        } message: {
-            Text(saveError ?? "")
+        .sheet(isPresented: $showCapture) {
+            QuickCaptureSheet(entryAttachments: entryAttachments, entryAction: entryAction)
+                .environmentObject(env)
         }
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
             let current = items
             photoItems = []
             Task {
+                var images: [PendingAttachment] = []
                 for item in current {
                     if let data = try? await item.loadTransferable(type: Data.self), !data.isEmpty {
-                        await MainActor.run { pendings.append(PendingAttachment(kind: .image(data))) }
+                        images.append(PendingAttachment(kind: .image(data)))
                     }
                 }
-                await MainActor.run { focused = true }
-            }
-        }
-    }
-
-    private var pendingRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(pendings) { pending in
-                    HStack(spacing: 4) {
-                        Text(pending.label)
-                            .font(.system(size: 12))
-                            .lineLimit(1)
-                        Button {
-                            pendings.removeAll { $0.id == pending.id }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .accessibilityLabel("移除附件 \(pending.label)")
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(Color(.tertiarySystemFill)))
+                guard !images.isEmpty else { return }
+                await MainActor.run {
+                    openCapture(images, action: .none)
                 }
             }
         }
     }
 
-    private var toolIcons: some View {
-        HStack(spacing: 14) {
-            Button { showVoiceSheet = true } label: {
-                Image(systemName: "mic.fill").font(.system(size: 18))
-            }
-            .accessibilityLabel("语音记录")
-            .accessibilityIdentifier("tool_mic")
-
-            PhotosPicker(selection: $photoItems, maxSelectionCount: 9, matching: .images) {
-                Image(systemName: "camera.fill").font(.system(size: 18))
-            }
-            .accessibilityLabel("添加图片")
-            .accessibilityIdentifier("tool_camera")
-
-            Button { showLinkSheet = true } label: {
-                Image(systemName: "link").font(.system(size: 18))
-            }
-            .accessibilityLabel("收藏链接")
-            .accessibilityIdentifier("tool_link")
-        }
-        .foregroundStyle(Color(env.appTint))
-        .padding(.bottom, 6)
-    }
-
-    private var saveButton: some View {
-        Button(action: save) {
-            if saving {
-                ProgressView().frame(width: 20, height: 20)
-            } else {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(canSave ? Color(env.appTint) : Color(.tertiaryLabel))
-            }
-        }
-        .disabled(!canSave || saving)
-        .accessibilityLabel("保存灵感")
-        .accessibilityIdentifier("quick_save")
-        .padding(.bottom, 2)
-    }
-
-    private var canSave: Bool {
-        !env.currentInputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendings.isEmpty
-    }
-
-    private func save() {
-        guard canSave, !saving else { return }
-        saving = true
-        var text = env.currentInputText
-        let toAttach = pendings
-        // 零必填(DESIGN §4.4):纯附件无文本时用占位,不许静默丢
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            text = QuickCapture.placeholderText(for: toAttach)
-        }
-
-        guard let idea = env.store.capture(text: text) else {
-            saving = false
-            return
-        }
-        var failed: [PendingAttachment] = []
-        for pending in toAttach {
-            switch pending.kind {
-            case .image(let data):
-                if (try? env.store.addImage(data, to: idea, media: env.mediaStore)) == nil {
-                    failed.append(pending)
-                }
-            case .audio(let url, let duration, let transcription):
-                if (try? env.store.addAudio(at: url, to: idea, duration: duration,
-                                            transcription: transcription, media: env.mediaStore)) == nil {
-                    failed.append(pending)
-                }
-            case .link(let meta):
-                env.store.addLink(meta, to: idea)
-            }
-        }
-        saving = false
-        if failed.isEmpty {
-            withAnimation(.spring(response: 0.25)) {
-                env.currentInputText = ""
-                pendings = []
-                focused = false
-            }
-            env.draftService.clear()
-            draftSaveTask?.cancel()
-            env.pendingDraftText = nil
-        } else {
-            // 落盘失败:保留未成功附件与文本,明示用户(不许无声丢失)
-            pendings = failed
-            saveError = "有 \(failed.count) 个附件保存失败,已保留在待提交区,可重试"
-        }
-    }
-
-    // MARK: - 草稿(DESIGN §4.3:500ms 节流 + 失焦立即)
-
-    private func scheduleDraftSave(_ text: String) {
-        draftSaveTask?.cancel()
-        draftSaveTask = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            guard !Task.isCancelled else { return }
-            env.draftService.save(text: text)
-        }
-    }
-
-    private func flushDraft() {
-        draftSaveTask?.cancel()
-        env.draftService.save(text: env.currentInputText)
+    private func openCapture(_ attachments: [PendingAttachment],
+                             action: QuickCaptureSheet.EntryAction) {
+        entryAttachments = attachments
+        entryAction = action
+        showCapture = true
     }
 }
+
 
 // MARK: - 语音录制 Sheet
 

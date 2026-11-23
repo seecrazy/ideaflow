@@ -31,7 +31,7 @@ enum SyncState: Int16, Codable {
 // MARK: - 实体(DESIGN 10.1)
 
 @objc(Idea)
-final class Idea: NSManagedObject {
+final class Idea: NSManagedObject, Identifiable {
     @NSManaged var id: UUID
     @NSManaged var title: String?
     @NSManaged var content: String?

@@ -13,6 +13,8 @@ struct HomeView: View {
     private final class ObserverBox { var token: NSObjectProtocol? }
     @State private var observerBox = ObserverBox()
     @State private var autoPushDetail = ProcessInfo.processInfo.arguments.contains("-openDetail")
+    @State private var showDraftCapture = false
+    @State private var voiceTargetIdea: Idea?
     @State private var autoPushRecycle = ProcessInfo.processInfo.arguments.contains("-openRecycle")
 
     private let pageSize = 30
@@ -28,7 +30,7 @@ struct HomeView: View {
         .navigationTitle("灵感集")
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !multiSelectActive {
-                QuickInputBar()
+                QuickEntryBar()
             } else {
                 MultiSelectBar(selectedCount: selectedIDs.count,
                                statusMenu: AnyView(batchStatusMenu),
@@ -74,6 +76,21 @@ struct HomeView: View {
         .navigationDestination(isPresented: $autoPushRecycle) {
             RecycleBinView()
         }
+        .sheet(isPresented: $showDraftCapture) {
+            QuickCaptureSheet(entryAttachments: [], entryAction: .none)
+                .environmentObject(env)
+        }
+        .sheet(item: $voiceTargetIdea) { idea in
+            VoiceCaptureSheet { pending in
+                guard let pending else { return }
+                if case .audio(let url, let duration, let transcription) = pending.kind {
+                    _ = try? env.store.addAudio(at: url, to: idea, duration: duration,
+                                                 transcription: transcription, media: env.mediaStore)
+                }
+            }
+            .presentationDetents([.medium])
+            .environmentObject(env)
+        }
         .onDisappear {
             if let token = observerBox.token {
                 NotificationCenter.default.removeObserver(token)
@@ -90,6 +107,7 @@ struct HomeView: View {
                 DraftBanner(text: draft) {
                     env.currentInputText = draft
                     env.pendingDraftText = nil
+                    showDraftCapture = true
                 } onDiscard: {
                     env.draftService.clear()
                     env.pendingDraftText = nil
@@ -118,6 +136,14 @@ struct HomeView: View {
                             try? env.store.softDelete(idea)
                             refresh()
                         } label: { Label("删除", systemImage: "trash") }
+                        if idea.status == .draft {
+                            Button {
+                                voiceTargetIdea = idea
+                            } label: {
+                                Label("补语音", systemImage: "mic.badge.plus")
+                            }
+                            .tint(Color(env.appTint))
+                        }
                         quickAction(for: idea)
                     }
                     .contextMenu {
