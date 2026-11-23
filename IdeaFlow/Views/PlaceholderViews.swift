@@ -1,13 +1,5 @@
 import SwiftUI
 
-/// 搜索页(Task 10 实现)
-struct SearchView: View {
-    var body: some View {
-        Text("搜索")
-            .navigationTitle("搜索")
-    }
-}
-
 /// 标签页(Task 11 实现)
 struct TagsView: View {
     var body: some View {
