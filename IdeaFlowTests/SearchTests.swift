@@ -226,3 +226,117 @@ final class SearchServiceTests: XCTestCase {
         XCTAssertLessThan(best, 0.2, "1 万条 FTS 搜索应 ≤ 200ms,实测 \(best * 1000)ms")
     }
 }
+
+// MARK: - 终审修复回归
+
+final class SearchRegressionTests: XCTestCase {
+    var dir: URL!
+    var db: SearchIndexDatabase!
+
+    override func setUp() {
+        super.setUp()
+        dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("idx-reg-\(UUID().uuidString)", isDirectory: true)
+        db = SearchIndexDatabase(url: dir.appendingPathComponent("SearchIndex.sqlite"))
+    }
+
+    override func tearDown() {
+        db.close()
+        try? FileManager.default.removeItem(at: dir)
+        super.tearDown()
+    }
+
+    // 终审 #6:spec 示例"chan pin you hua"带空格全拼应命中
+    func testPinyinQueryWithSpacesMatches() {
+        db.upsert(doc: IndexDocument(ideaID: UUID(), title: "产品优化", content: "", transcription: "", linkTitle: "", fileNames: ""))
+        XCTAssertEqual(Set(db.matchingIDs(query: "chan pin")), Set(db.matchingIDs(query: "chanpin")), "带空格与连写应等效")
+        XCTAssertFalse(db.matchingIDs(query: "chan pin").isEmpty)
+    }
+}
+
+@MainActor
+final class SearchTagRegressionTests: XCTestCase {
+    var persistence: PersistenceController!
+    var store: IdeaStore!
+    var service: SearchService!
+    var dir: URL!
+
+    override func setUp() {
+        super.setUp()
+        persistence = PersistenceController(inMemory: true)
+        store = IdeaStore(persistence: persistence)
+        dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("svc-reg-\(UUID().uuidString)", isDirectory: true)
+        service = SearchService(index: SearchIndexDatabase(url: dir.appendingPathComponent("SearchIndex.sqlite")))
+        service.attach(to: store)
+    }
+
+    override func tearDown() {
+        service.index.close()
+        try? FileManager.default.removeItem(at: dir)
+        super.tearDown()
+    }
+
+    // 终审 #8:spec §6.3 搜索范围含标签
+    func testSearchByTagTextHitsIdea() throws {
+        _ = store.capture(text: "只有正文没有关键词", tagNames: ["读书会"])
+        service.flushIndex()
+        let hits = try service.search(query: "读书会")
+        XCTAssertEqual(hits.count, 1, "按标签词应命中")
+    }
+}
+
+@MainActor
+final class RecycleTagRegressionTests: XCTestCase {
+    // 终审 #9(Review Focus #4):删除标签后恢复回收站点子
+    func testRestoreAfterTagDeleted() throws {
+        let persistence = PersistenceController(inMemory: true)
+        let store = IdeaStore(persistence: persistence)
+        let idea = store.capture(text: "带标签的回收站条目", tagNames: ["即将删除"])!
+        try store.softDelete(idea)
+        let tag = idea.tags.first!
+        persistence.viewContext.delete(tag)
+        try persistence.viewContext.save()
+
+        try store.restore(idea)
+        XCTAssertTrue(idea.tags.isEmpty, "标签已删,恢复后标签集应为空而非悬挂")
+        idea.content = "恢复后再编辑"
+        try persistence.viewContext.save()   // 不崩
+    }
+}
+
+final class ThumbnailCacheTests: XCTestCase {
+    // 终审 #7:缩略图缓存命中(同一实例)
+    func testCacheReturnsSameInstance() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("thumb-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("t.jpg")
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: 40, height: 40))
+        try renderer.image { ctx in
+            UIColor.systemBrown.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 40, height: 40))
+        }.jpegData(compressionQuality: 0.8)!.write(to: url)
+
+        let cache = ThumbnailCache()
+        let a = cache.image(atPath: url.path)
+        let b = cache.image(atPath: url.path)
+        XCTAssertNotNil(a)
+        XCTAssertTrue(a === b, "同路径二次加载应命中缓存")
+        XCTAssertNil(cache.image(atPath: "/nonexistent/x.jpg"))
+        try? FileManager.default.removeItem(at: dir)
+    }
+}
+
+final class QuickCapturePlaceholderTests: XCTestCase {
+    // 终审 #1:纯附件保存的占位文本(零必填)
+    func testPlaceholderForAttachmentOnly() {
+        let voice = PendingAttachment(kind: .audio(URL(fileURLWithPath: "/tmp/a.m4a"), duration: 12, transcription: nil))
+        XCTAssertFalse(QuickCapture.placeholderText(for: [voice]).isEmpty, "纯语音应有占位标题")
+        let link = PendingAttachment(kind: .link(LinkMeta(url: URL(string: "https://x.com")!, title: "外部链接标题", summary: nil)))
+        XCTAssertEqual(QuickCapture.placeholderText(for: [link]), "外部链接标题", "链接附件用其标题")
+        let img = PendingAttachment(kind: .image(Data([1])))
+        XCTAssertEqual(QuickCapture.placeholderText(for: [img]), "图片速记")
+        XCTAssertTrue(QuickCapture.placeholderText(for: []).isEmpty)
+    }
+}

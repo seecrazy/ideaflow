@@ -22,6 +22,24 @@ struct PendingAttachment: Identifiable {
     }
 }
 
+/// 纯附件保存的零必填占位(终审 #1):语音/图片用速记名,链接用其标题
+enum QuickCapture {
+    static func placeholderText(for pendings: [PendingAttachment]) -> String {
+        for pending in pendings {
+            if case .link(let meta) = pending.kind, !meta.title.isEmpty {
+                return meta.title
+            }
+        }
+        if pendings.contains(where: { if case .image = $0.kind { return true }; return false }) {
+            return "图片速记"
+        }
+        if pendings.contains(where: { if case .audio = $0.kind { return true }; return false }) {
+            return "语音速记"
+        }
+        return ""
+    }
+}
+
 /// 底部常驻输入条(DESIGN §4.3):idle → focused → typing → saving → idle;
 /// 500ms 节流草稿;工具条 🎤 📷 🔗;零必填,任何内容可直接保存。
 struct QuickInputBar: View {
@@ -31,6 +49,7 @@ struct QuickInputBar: View {
     @State private var pendings: [PendingAttachment] = []
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var saving = false
+    @State private var saveError: String?
 
     @State private var showVoiceSheet = false
     @State private var showLinkSheet = false
@@ -80,6 +99,14 @@ struct QuickInputBar: View {
                 focused = true
             }
             .presentationDetents([.height(220)])
+        }
+        .alert("保存提示", isPresented: Binding(
+            get: { saveError != nil },
+            set: { if !$0 { saveError = nil } }
+        )) {
+            Button("好", role: .cancel) { saveError = nil }
+        } message: {
+            Text(saveError ?? "")
         }
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
@@ -168,33 +195,48 @@ struct QuickInputBar: View {
     private func save() {
         guard canSave, !saving else { return }
         saving = true
-        let text = env.currentInputText
+        var text = env.currentInputText
         let toAttach = pendings
+        // 零必填(DESIGN §4.4):纯附件无文本时用占位,不许静默丢
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            text = QuickCapture.placeholderText(for: toAttach)
+        }
 
         guard let idea = env.store.capture(text: text) else {
             saving = false
             return
         }
+        var failed: [PendingAttachment] = []
         for pending in toAttach {
             switch pending.kind {
             case .image(let data):
-                _ = try? env.store.addImage(data, to: idea, media: env.mediaStore)
+                if (try? env.store.addImage(data, to: idea, media: env.mediaStore)) == nil {
+                    failed.append(pending)
+                }
             case .audio(let url, let duration, let transcription):
-                _ = try? env.store.addAudio(at: url, to: idea, duration: duration,
-                                             transcription: transcription, media: env.mediaStore)
+                if (try? env.store.addAudio(at: url, to: idea, duration: duration,
+                                            transcription: transcription, media: env.mediaStore)) == nil {
+                    failed.append(pending)
+                }
             case .link(let meta):
                 env.store.addLink(meta, to: idea)
             }
         }
-        withAnimation(.spring(response: 0.25)) {
-            env.currentInputText = ""
-            pendings = []
-            saving = false
-            focused = false
+        saving = false
+        if failed.isEmpty {
+            withAnimation(.spring(response: 0.25)) {
+                env.currentInputText = ""
+                pendings = []
+                focused = false
+            }
+            env.draftService.clear()
+            draftSaveTask?.cancel()
+            env.pendingDraftText = nil
+        } else {
+            // 落盘失败:保留未成功附件与文本,明示用户(不许无声丢失)
+            pendings = failed
+            saveError = "有 \(failed.count) 个附件保存失败,已保留在待提交区,可重试"
         }
-        env.draftService.clear()
-        draftSaveTask?.cancel()
-        env.pendingDraftText = nil
     }
 
     // MARK: - 草稿(DESIGN §4.3:500ms 节流 + 失焦立即)

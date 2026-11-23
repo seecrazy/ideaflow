@@ -10,7 +10,8 @@ struct HomeView: View {
     @State private var limit = 30
     @State private var multiSelectActive = false
     @State private var selectedIDs: Set<NSManagedObjectID> = []
-    @State private var observer: NSObjectProtocol?
+    private final class ObserverBox { var token: NSObjectProtocol? }
+    @State private var observerBox = ObserverBox()
     @State private var autoPushDetail = ProcessInfo.processInfo.arguments.contains("-openDetail")
     @State private var autoPushRecycle = ProcessInfo.processInfo.arguments.contains("-openRecycle")
 
@@ -74,7 +75,10 @@ struct HomeView: View {
             RecycleBinView()
         }
         .onDisappear {
-            if let observer { NotificationCenter.default.removeObserver(observer) }
+            if let token = observerBox.token {
+                NotificationCenter.default.removeObserver(token)
+            }
+            observerBox.token = nil   // 置空,onAppear 的 guard 才能重装
         }
     }
 
@@ -289,8 +293,8 @@ struct HomeView: View {
     }
 
     private func installSaveObserver() {
-        guard observer == nil else { return }
-        observer = NotificationCenter.default.addObserver(
+        guard observerBox.token == nil else { return }
+        observerBox.token = NotificationCenter.default.addObserver(
             forName: .NSManagedObjectContextDidSave,
             object: env.persistence.viewContext,
             queue: .main

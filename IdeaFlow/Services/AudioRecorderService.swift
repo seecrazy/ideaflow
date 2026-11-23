@@ -17,8 +17,28 @@ final class AudioRecorderService: NSObject, ObservableObject {
     private var recorder: AVAudioRecorder?
     private var levelTimer: Timer?
     private var currentURL: URL?
+    private var interruptionObserver: NSObjectProtocol?
 
     var onFinished: ((URL, TimeInterval) -> Void)?
+
+    /// 来电等音频中断:保存已录部分(DESIGN §13),不再悬挂
+    private func installInterruptionObserver() {
+        guard interruptionObserver == nil else { return }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] note in
+            guard let self,
+                  let info = note.userInfo,
+                  let typeRaw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  typeRaw == AVAudioSession.InterruptionType.began.rawValue else { return }
+            Task { @MainActor in
+                guard self.recorder != nil else { return }
+                self.stop()   // stop 会回调 onFinished 保存已录部分
+            }
+        }
+    }
 
     private static func tempFileURL() -> URL {
         FileManager.default.temporaryDirectory
@@ -43,6 +63,7 @@ final class AudioRecorderService: NSObject, ObservableObject {
             self.currentURL = url
             state = .recording
             startLevelTimer()
+            installInterruptionObserver()
             return true
         } catch {
             stopTracking()

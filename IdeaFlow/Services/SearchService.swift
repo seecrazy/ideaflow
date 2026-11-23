@@ -9,6 +9,18 @@ struct IndexDocument {
     let transcription: String
     let linkTitle: String
     let fileNames: String
+    var tagNames: String = ""
+
+    init(ideaID: UUID, title: String, content: String, transcription: String,
+         linkTitle: String, fileNames: String, tagNames: String = "") {
+        self.ideaID = ideaID
+        self.title = title
+        self.content = content
+        self.transcription = transcription
+        self.linkTitle = linkTitle
+        self.fileNames = fileNames
+        self.tagNames = tagNames
+    }
 }
 
 /// 组合筛选(AND 语义;Codable 供 SavedFilter 智能视图持久化)
@@ -95,7 +107,8 @@ final class SearchService: ObservableObject {
             content: idea.content ?? "",
             transcription: transcriptions,
             linkTitle: linkTitles,
-            fileNames: fileNames
+            fileNames: fileNames,
+            tagNames: idea.tags.map(\.name).joined(separator: " ")
         )
     }
 

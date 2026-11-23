@@ -15,13 +15,17 @@ final class SpeechTranscriptionService: ObservableObject {
     func transcribe(fileURL: URL, locale: Locale = Locale(identifier: "zh-CN"),
                     onUpdate: ((String) -> Void)? = nil,
                     completion: @escaping (String?) -> Void) {
-        guard SFSpeechRecognizer.authorizationStatus() == .authorized || requestAuth() else {
-            // 授权拿不到时同步返回;调用方保留音频
-            completion(nil)
-            return
-        }
         isTranscribing = true
         task = Task { [weak self] in
+            // 授权异步请求:不再阻塞主线程等弹窗(终审 #4)
+            let authorized = await Self.ensureAuthorized()
+            guard authorized else {
+                await MainActor.run {
+                    self?.isTranscribing = false
+                    completion(nil)
+                }
+                return
+            }
             let result = await Self.transcribeAsync(fileURL: fileURL, locale: locale, onUpdate: onUpdate)
             await MainActor.run {
                 self?.isTranscribing = false
@@ -37,15 +41,14 @@ final class SpeechTranscriptionService: ObservableObject {
         isTranscribing = false
     }
 
-    private func requestAuth() -> Bool {
-        let semaphore = DispatchSemaphore(value: 0)
-        var ok = false
-        SFSpeechRecognizer.requestAuthorization { status in
-            ok = (status == .authorized)
-            semaphore.signal()
+    private static func ensureAuthorized() async -> Bool {
+        let status = SFSpeechRecognizer.authorizationStatus()
+        if status == .authorized { return true }
+        return await withCheckedContinuation { cont in
+            SFSpeechRecognizer.requestAuthorization { s in
+                cont.resume(returning: s == .authorized)
+            }
         }
-        semaphore.wait()
-        return ok
     }
 
     private static func transcribeAsync(fileURL: URL, locale: Locale,

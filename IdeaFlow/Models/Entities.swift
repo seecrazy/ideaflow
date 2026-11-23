@@ -58,10 +58,14 @@ final class Idea: NSManagedObject {
             .components(separatedBy: .newlines).first, !first.isEmpty {
             return String(first.prefix(20))
         }
+        return "未命名灵感 \(Self.fallbackFormatter.string(from: createdAt))"
+    }
+
+    private static let fallbackFormatter: DateFormatter = {
         let df = DateFormatter()
         df.dateFormat = "HH:mm"
-        return "未命名灵感 \(df.string(from: createdAt))"
-    }
+        return df
+    }()
 
     static func create(in ctx: NSManagedObjectContext, title: String?, content: String?, status: IdeaStatus) -> Idea {
         let idea = Idea(entity: entityDescription(in: ctx), insertInto: ctx)

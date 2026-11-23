@@ -44,12 +44,21 @@ final class AppEnvironment: ObservableObject {
         if ProcessInfo.processInfo.arguments.contains("-seedDemo") {
             DemoSeeder.seedIfNeeded(store: store)
             search.flushIndex()
+        } else if search.index.indexedCount == 0 {
+            // 老库升级(FTS 结构变更 DROP 后)/索引意外为空 → 全量重建
+            let req = Idea.fetchRequest()
+            req.predicate = NSPredicate(format: "deletedAt == nil")
+            if ((try? store.ctx.fetch(req))?.isEmpty == false) {
+                search.rebuildIndexFromStore()
+                search.flushIndex()
+            }
         }
     }
     /// UI 测试隔离:清空全部数据与草稿
     private func resetForUITests() {
         draftService.clear()
         UserDefaults.standard.removeObject(forKey: "ideaflow.search.history")
+        searchService.index.rebuild(with: [])   // 索引随数据一并清空
         let coordinator = persistence.container.persistentStoreCoordinator
         for entity in ["StatusLog", "Attachment", "Idea", "Tag", "SavedFilter"] {
             let fetch = NSFetchRequest<NSFetchRequestResult>(entityName: entity)

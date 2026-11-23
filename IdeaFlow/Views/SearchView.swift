@@ -11,6 +11,7 @@ struct SearchView: View {
     @State private var hits: [SearchService.SearchHit] = []
     @State private var searched = false
     @State private var searchTask: Task<Void, Never>?
+    @State private var historyTask: Task<Void, Never>?
     @State private var sortByTime = false
     @State private var allTags: [Tag] = []
 
@@ -27,7 +28,13 @@ struct SearchView: View {
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索灵感/拼音/标签")
         .autocorrectionDisabled()
         .onChange(of: query) { _, text in
-            scheduleSearch(text)
+            historyTask?.cancel()
+            if text.trimmingCharacters(in: .whitespaces).isEmpty {
+                // 清词但保留筛选:立即出结构化结果(终审 #11)
+                if !filter.isEmpty { runSearch() } else { searched = false }
+            } else {
+                scheduleSearch(text)
+            }
         }
         .onAppear {
             refreshTags()
@@ -65,7 +72,7 @@ struct SearchView: View {
 
             if !allTags.isEmpty {
                 Section {
-                    Text("热门标签").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                    Text("全部标签").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                         .listRowSeparator(.hidden)
                     chipsRow(items: allTags.map { "#\($0.name)" }, removable: false) { term in
                         query = String(term.dropFirst())
@@ -313,11 +320,19 @@ struct SearchView: View {
     private func runSearch() {
         let q = query
         let f = filter
-        env.searchService.recordHistory(q)
         env.searchService.flushIndex()
         hits = (try? env.searchService.search(query: q, filter: f)) ?? []
         searched = true
         resort()
+        // 历史延迟 1.5s 落笔:输入中间前缀不污染历史(终审 #10)
+        historyTask?.cancel()
+        let trimmed = q.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        historyTask = Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+            env.searchService.recordHistory(trimmed)
+        }
     }
 
     private func resort() {

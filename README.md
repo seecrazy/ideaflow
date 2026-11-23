@@ -47,7 +47,7 @@ xcodebuild -project IdeaFlow.xcodeproj -scheme IdeaFlow \
   -destination 'platform=iOS Simulator,name=iPhone 18 Pro' test
 ```
 
-58 个单元测试 + 3 个端到端 UI 测试(记录→改状态→搜索、草稿强杀恢复、回收站恢复),含一 万条 FTS 搜索 ≤ 200ms 性能断言。
+63 个单元测试 + 3 个端到端 UI 测试(记录→改状态→搜索、草稿强杀恢复、回收站恢复),含一 万条 FTS 搜索 ≤ 200ms 性能断言与终审回归集。
 
 ## 设计与现状
 

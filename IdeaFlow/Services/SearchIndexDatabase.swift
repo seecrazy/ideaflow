@@ -51,6 +51,10 @@ final class SearchIndexDatabase {
     // MARK: - Schema
 
     private func migrate() {
+        // 旧结构(无 tags 列)→ DROP 重建;上层会在索引为空时全量重建
+        if hasFTSTable && !ftsHasTagsColumn {
+            exec("DROP TABLE idea_fts")
+        }
         exec("""
         CREATE VIRTUAL TABLE IF NOT EXISTS idea_fts USING fts5(
             idea_id UNINDEXED,
@@ -59,6 +63,7 @@ final class SearchIndexDatabase {
             transcription,
             link_title,
             file_names,
+            tags,
             tokenize = 'unicode61'
         );
         CREATE TABLE IF NOT EXISTS idea_pinyin (
@@ -67,6 +72,21 @@ final class SearchIndexDatabase {
             initials TEXT NOT NULL
         );
         """)
+    }
+
+    private var hasFTSTable: Bool {
+        guard let stmt = prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='idea_fts'") else { return false }
+        defer { sqlite3_finalize(stmt) }
+        return sqlite3_step(stmt) == SQLITE_ROW
+    }
+
+    private var ftsHasTagsColumn: Bool {
+        // 探测列存在性:prepare 失败(列不存在)是预期路径,不走 assert
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT tags FROM idea_fts LIMIT 0", -1, &stmt, nil) == SQLITE_OK,
+              let stmt else { return false }
+        defer { sqlite3_finalize(stmt) }
+        return true
     }
 
     private func exec(_ sql: String) {
@@ -147,8 +167,8 @@ final class SearchIndexDatabase {
         exec("BEGIN IMMEDIATE TRANSACTION")
         bind.run("DELETE FROM idea_fts WHERE idea_id = ?") { sqlite3_bind_text($0, 1, doc.ideaID.uuidString, -1, Self.transient) }
         bind.run("""
-            INSERT INTO idea_fts(idea_id, title, content, transcription, link_title, file_names)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO idea_fts(idea_id, title, content, transcription, link_title, file_names, tags)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """) { stmt in
             sqlite3_bind_text(stmt, 1, doc.ideaID.uuidString, -1, Self.transient)
             sqlite3_bind_text(stmt, 2, Self.expand(doc.title), -1, Self.transient)
@@ -156,6 +176,7 @@ final class SearchIndexDatabase {
             sqlite3_bind_text(stmt, 4, Self.expand(doc.transcription), -1, Self.transient)
             sqlite3_bind_text(stmt, 5, Self.expand(doc.linkTitle), -1, Self.transient)
             sqlite3_bind_text(stmt, 6, Self.expand(doc.fileNames), -1, Self.transient)
+            sqlite3_bind_text(stmt, 7, Self.expand(doc.tagNames), -1, Self.transient)
         }
         let pinyin = PinyinTransformer.analyze([doc.title, doc.content].joined(separator: " "))
         bind.run("INSERT OR REPLACE INTO idea_pinyin(idea_id, full_pinyin, initials) VALUES (?, ?, ?)") { stmt in
@@ -182,7 +203,7 @@ final class SearchIndexDatabase {
         exec("BEGIN IMMEDIATE TRANSACTION")
         exec("DELETE FROM idea_fts")
         exec("DELETE FROM idea_pinyin")
-        let insertFTS = prepare("INSERT INTO idea_fts(idea_id, title, content, transcription, link_title, file_names) VALUES (?, ?, ?, ?, ?, ?)")
+        let insertFTS = prepare("INSERT INTO idea_fts(idea_id, title, content, transcription, link_title, file_names, tags) VALUES (?, ?, ?, ?, ?, ?, ?)")
         let insertPinyin = prepare("INSERT OR REPLACE INTO idea_pinyin(idea_id, full_pinyin, initials) VALUES (?, ?, ?)")
         for doc in docs {
             if let stmt = insertFTS {
@@ -193,6 +214,7 @@ final class SearchIndexDatabase {
                 sqlite3_bind_text(stmt, 4, Self.expand(doc.transcription), -1, Self.transient)
                 sqlite3_bind_text(stmt, 5, Self.expand(doc.linkTitle), -1, Self.transient)
                 sqlite3_bind_text(stmt, 6, Self.expand(doc.fileNames), -1, Self.transient)
+                sqlite3_bind_text(stmt, 7, Self.expand(doc.tagNames), -1, Self.transient)
                 sqlite3_step(stmt)
             }
             if let stmt = insertPinyin {
@@ -233,9 +255,11 @@ final class SearchIndexDatabase {
             }
         }
 
-        // 拼音层:仅对拉丁字母/数字查询启用(中文查询 FTS 已覆盖)
-        if query.allSatisfy({ $0.isLetter || $0.isNumber }) && !query.isEmpty {
-            let pattern = "%\(Self.escapeLike(query.lowercased()))%"
+        // 拼音层:仅对拉丁字母/数字/空格查询启用(中文查询 FTS 已覆盖)
+        // spec §6.2 示例"chan pin you hua"带空格 → 压缩后按连写库匹配
+        if query.allSatisfy({ $0.isLetter || $0.isNumber || $0.isWhitespace }) && !query.isEmpty {
+            let compact = query.lowercased().filter { !$0.isWhitespace }
+            let pattern = "%\(Self.escapeLike(compact))%"
             if let stmt = prepare("SELECT idea_id FROM idea_pinyin WHERE full_pinyin LIKE ? ESCAPE '\\' OR initials LIKE ? ESCAPE '\\'") {
                 defer { sqlite3_finalize(stmt) }
                 sqlite3_bind_text(stmt, 1, pattern, -1, Self.transient)

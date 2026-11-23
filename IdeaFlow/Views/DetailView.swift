@@ -272,19 +272,26 @@ struct SectionHeader<Trailing: View>: View {
 
 struct ThumbnailView: View {
     @ObservedObject var att: Attachment
+    @State private var ui: UIImage?
 
     var body: some View {
-        let files = AttachmentFiles()
-        if let thumb = att.thumbnailPath,
-           let ui = UIImage(contentsOfFile: files.absoluteURL(for: thumb).path) {
-            Image(uiImage: ui)
-                .resizable()
-                .scaledToFill()
-        } else {
-            ZStack {
-                Rectangle().fill(Color(.tertiarySystemFill))
-                Image(systemName: "photo").foregroundStyle(.tertiary)
+        Group {
+            if let ui {
+                Image(uiImage: ui).resizable().scaledToFill()
+            } else {
+                ZStack {
+                    Rectangle().fill(Color(.tertiarySystemFill))
+                    Image(systemName: "photo").foregroundStyle(.tertiary)
+                }
             }
+        }
+        .task(id: att.objectID) {
+            // 后台解码,主线程只收结果(DESIGN §12;终审 #7)
+            guard let thumb = att.thumbnailPath else { return }
+            let abs = AttachmentFiles().absoluteURL(for: thumb).path
+            ui = await Task.detached(priority: .userInitiated) {
+                ThumbnailCache.shared.image(atPath: abs)
+            }.value
         }
     }
 }
