@@ -16,9 +16,7 @@ struct IdeaFlowApp: App {
                     }
                 }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active {
-                        env.appLock.handleBecomeActive()
-                    }
+                    env.appLock.handleScenePhase(phase)
                     // DESIGN §4.3:失焦/退后台立即落草稿,不等 500ms 节流
                     if phase != .active, !env.currentInputText.isEmpty {
                         env.draftService.save(text: env.currentInputText)
